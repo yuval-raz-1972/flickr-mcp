@@ -22,7 +22,7 @@ The AI will look at your photos, generate appropriate metadata, and show you a p
 ## Requirements
 
 - Node.js 18 or later
-- A free Flickr account
+- A **Flickr Pro account** — Flickr requires Pro to register API applications
 - An MCP-compatible AI client
 
 ---
@@ -30,6 +30,8 @@ The AI will look at your photos, generate appropriate metadata, and show you a p
 ## Setup
 
 ### 1. Register a Flickr API key
+
+> **Note:** Flickr requires a [Pro account](https://www.flickr.com/account/upgrade/pro) to register API applications (~$8/month or ~$72/year). If you're using Flickr seriously enough to want AI-assisted tagging, you likely already have one.
 
 Go to [flickr.com/services/apps/create/noncommercial](https://www.flickr.com/services/apps/create/noncommercial) and fill out the short form — any app name works, select "personal use." It takes about two minutes. Copy the **API key** and **API secret** from the next page.
 
@@ -39,7 +41,7 @@ Go to [flickr.com/services/apps/create/noncommercial](https://www.flickr.com/ser
 npx flickr-mcp setup
 ```
 
-This will prompt for your API key and secret, open Flickr's authorization page in your browser, and ask you to paste the verification code Flickr shows you. Your credentials are saved to `~/.config/flickr-mcp/credentials.json` and never leave your machine.
+A browser window will open with a setup wizard. Paste your API key and secret, then follow the prompts to authorize access to your Flickr account. Your credentials are saved to `~/.config/flickr-mcp/credentials.json` and never leave your machine.
 
 ### 3. Add flickr-mcp to your AI client
 

@@ -122,7 +122,7 @@ button:disabled{background:#ccc;cursor:not-allowed}
   <!-- Step 1: credentials -->
   <div class="panel on" id="p1">
     <div class="hint">
-      First, you need a free Flickr API key.<br>
+      You need a Flickr API key. Registering one requires a <strong>Flickr Pro account</strong>.<br>
       <a href="https://www.flickr.com/services/apps/create/noncommercial/" target="_blank">Create a Flickr app →</a>
       &nbsp;(~2 minutes — any name works, choose "personal use")
     </div>
