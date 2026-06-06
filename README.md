@@ -144,6 +144,14 @@ Then point your MCP client at `node /path/to/flickr-mcp/dist/index.js` instead o
 
 ---
 
+## Support
+
+flickr-mcp is free and open source. If it saves you time, a GitHub sponsorship is always appreciated — it helps justify spending more time on projects like this.
+
+[Sponsor on GitHub](https://github.com/sponsors/MK3Core)
+
+---
+
 ## Contributing
 
 Issues and pull requests are welcome. The codebase is intentionally small — around 500 lines of TypeScript across five files.
