@@ -90,10 +90,11 @@ export function buildAuthHeader(
 
 export async function getRequestToken(
   apiKey: string,
-  apiSecret: string
+  apiSecret: string,
+  callbackUrl: string = 'oob'
 ): Promise<{ token: string; tokenSecret: string }> {
   const url = 'https://www.flickr.com/services/oauth/request_token';
-  const reqParams = { oauth_callback: 'oob' };
+  const reqParams = { oauth_callback: callbackUrl };
   const header = buildAuthHeader('POST', url, reqParams, {
     consumerKey: apiKey,
     consumerSecret: apiSecret,
