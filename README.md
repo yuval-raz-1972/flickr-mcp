@@ -43,16 +43,32 @@ This will prompt for your API key and secret, open Flickr's authorization page i
 
 ### 3. Add flickr-mcp to your AI client
 
-The easiest way is to just ask your AI assistant directly:
+The easiest way is to paste the following prompt directly into your AI assistant. It contains everything needed — the config entry, the setup reminder, and a pointer to the full docs:
 
-> *"Add an MCP server called flickr to my config. The command is* `npx flickr-mcp`*."*
+> Add an MCP server to my config with these details:
+>
+> - **Name:** `flickr`
+> - **Command:** `npx`
+> - **Args:** `["flickr-mcp"]`
+>
+> The full config entry is:
+> ```json
+> "flickr": {
+>   "command": "npx",
+>   "args": ["flickr-mcp"]
+> }
+> ```
+>
+> Add this to the `mcpServers` block in my MCP config file, then let me know where you put it and remind me to restart the client.
+>
+> Full documentation and source: https://github.com/MK3Core/flickr-mcp
 
-Your assistant knows where its own config file lives and can add the entry for you. Restart the client after it makes the change.
+Your assistant knows where its own config file lives and will place the entry correctly regardless of which client you're using. After it confirms, restart the client.
 
 <details>
 <summary>Prefer to do it manually?</summary>
 
-The config entry looks like this for most clients:
+**Claude Code** — add to `~/.claude/settings.json` (global) or `.claude/settings.json` in a project:
 
 ```json
 {
@@ -65,13 +81,22 @@ The config entry looks like this for most clients:
 }
 ```
 
-**Claude Code** — add to `~/.claude/settings.json` (global) or `.claude/settings.json` in a project.
-
 **Claude Desktop**
 - Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
-**Cursor / Windsurf** — check your client's MCP settings panel.
+```json
+{
+  "mcpServers": {
+    "flickr": {
+      "command": "npx",
+      "args": ["flickr-mcp"]
+    }
+  }
+}
+```
+
+**Cursor / Windsurf** — check your client's MCP settings panel, or ask your assistant to find and edit the config file for you.
 
 </details>
 
