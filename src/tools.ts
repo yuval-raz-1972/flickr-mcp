@@ -106,17 +106,16 @@ export const TOOLS: Tool[] = [
     description:
       'Add tags to a photo. When dry_run is true (the default), returns a preview of what would be added without making any changes — use this to confirm with the user before writing.\n\n' +
       'WORKFLOW: Before generating tags, always call flickr_get_photo (with include_image: true when possible) and flickr_get_exif to understand the subject, location, and shooting conditions. Visual analysis produces better tags than relying on title/description alone.\n\n' +
-      'FLICKR TAGGING BEST PRACTICES — always follow these when generating tags:\n\n' +
-      'Quality over quantity: aim for 10–20 well-chosen tags per photo. The hard platform limit is 75; never pad to fill it.\n\n' +
+      'FLICKR TAGGING BEST PRACTICES:\n\n' +
+      'Target around 20 tags. The hard platform limit is 75, but more tags means less precision in the audience you reach — each tag should earn its place. Padding to a high count with weak tags dilutes the engaged audience who finds the photo, which indirectly hurts its performance in Flickr\'s Explore algorithm.\n\n' +
       'Cover these categories where applicable:\n' +
-      '• Subject/content — what is in the photo (e.g. "golden retriever", "sunset", "espresso")\n' +
-      '• Location — tag at each geographic level: continent, country, city, neighbourhood, venue (e.g. "europe", "france", "paris", "montmartre", "sacre coeur")\n' +
+      '• Subject/content — what is in the photo, at both broad and specific levels (e.g. "dog" AND "golden retriever" — include both so the photo appears in wide and narrow searches)\n' +
+      '• Location — tag at each geographic level that applies: continent, country, city, neighbourhood, venue (e.g. "europe", "france", "paris", "montmartre", "sacre coeur")\n' +
       '• Genre/style — photography genre or technique (e.g. "street photography", "portrait", "macro", "long exposure", "black and white", "bokeh")\n' +
       '• Mood/atmosphere — optional but useful (e.g. "moody", "minimalist", "golden hour", "blue hour")\n\n' +
       'NEVER add:\n' +
-      '• Generic noise tags: "photo", "image", "picture", "flickr", "camera" — they add zero discovery value\n' +
-      '• Irrelevant popular tags added only for traffic — Flickr\'s spam detection hides photos from search for this and can trigger Trust & Safety warnings or account termination\n' +
-      '• Near-duplicate tags (e.g. "dog" and "dogs" — pick one)\n' +
+      '• Generic noise tags: "photo", "image", "picture", "flickr", "camera" — zero discovery value\n' +
+      '• Irrelevant popular tags added only for traffic — Flickr\'s spam policy hides photos from search for this and can trigger Trust & Safety warnings or account termination\n' +
       '• Tags unrelated to the actual photo content\n\n' +
       'Format: multi-word tags (e.g. "long exposure") are passed as single strings; the server handles quoting automatically. Lowercase preferred.',
     inputSchema: {
@@ -127,7 +126,7 @@ export const TOOLS: Tool[] = [
           type: 'array',
           items: { type: 'string' },
           description:
-            'Tags to add. Aim for 10–20 relevant tags total (hard limit: 75 per photo). Multi-word tags (e.g. "golden hour", "long exposure") are supported — pass as single strings. Lowercase preferred. Never include generic noise tags like "photo" or "image", and never add irrelevant tags for traffic — Flickr treats this as spam.',
+            'Tags to add. Target around 20 relevant tags total (hard limit: 75 per photo). Multi-word tags (e.g. "golden hour", "long exposure") are supported — pass as single strings. Lowercase preferred. Never include noise tags like "photo" or "image", and never add irrelevant tags for traffic — Flickr treats this as spam and hides photos from search.',
         },
         dry_run: {
           type: 'boolean',
