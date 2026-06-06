@@ -17,7 +17,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'flickr_list_photos',
     description:
-      "List photos from your Flickr photostream. Returns photo IDs, titles, tags, and thumbnail URLs. Use this to discover what photos exist before getting details or making edits.",
+      "List photos from your Flickr photostream. Returns photo IDs, titles, tags, and thumbnail URLs. The response includes the current page number and total page count. If the user asks to list or see all photos, call this tool repeatedly — incrementing page by 1 each time — until you have fetched every page. Do not stop at page 1 if more pages exist.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -61,7 +61,7 @@ export const TOOLS: Tool[] = [
   {
     name: 'flickr_search_my_photos',
     description:
-      "Search your own photos by keyword, tags, or both. Only searches your own library — never other users' photos.",
+      "Search your own photos by keyword, tags, or both. Only searches your own library — never other users' photos. The response includes the current page number and total page count. If the user wants all matching results, call repeatedly incrementing page until all pages are fetched.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -79,7 +79,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'flickr_get_albums',
-    description: 'List your Flickr albums (photosets) with their titles, descriptions, and photo counts.',
+    description: 'List your Flickr albums (photosets) with their titles, descriptions, and photo counts. The response includes the current page number and total page count. If the user wants all albums, call repeatedly incrementing page until all pages are fetched.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -90,7 +90,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'flickr_get_album_photos',
-    description: 'List the photos inside a specific album.',
+    description: 'List the photos inside a specific album. The response includes the current page number and total page count. If the user wants all photos in the album, call repeatedly incrementing page until all pages are fetched.',
     inputSchema: {
       type: 'object',
       properties: {
