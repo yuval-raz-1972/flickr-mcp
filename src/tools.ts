@@ -154,6 +154,51 @@ export const TOOLS: Tool[] = [
     },
   },
   {
+    name: 'flickr_get_unprocessed_photos',
+    description:
+      'Find photos that need processing — missing tags, missing description, or still using a raw camera filename (DSC*, IMG_*, Lightroom export suffixes, etc.). Also returns photos with partial processing (e.g. has tags but no description). Use this as the entry point for the full processing workflow, then process each result with flickr_process_photo.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'flickr_process_photo',
+    description:
+      'Apply a complete set of metadata to a photo in one shot: title, description, tags, and group assignments. No dry_run — designed for the automated full-processing workflow.\n\n' +
+      'WORKFLOW — always do these steps before calling:\n' +
+      '1. Call flickr_get_photo (include_image: true) AND flickr_get_exif in parallel\n' +
+      '2. Visually analyse the image and read the EXIF data\n' +
+      '3. Generate all metadata:\n' +
+      '   • Title — a descriptive name if the current title is a raw filename; omit if already good\n' +
+      '   • Description — 1–2 sentences, factual, no em-dashes\n' +
+      '   • Tags — ~20 relevant tags: subject (broad AND specific), location chain (continent→venue), genre/style, mood. PLUS gear tags from EXIF: camera body (e.g. "sony a7 iv", "canon r5", "fujifilm xt5") and focal length/lens (e.g. "85mm", "24-70mm"). Follow Flickr tagging best practices.\n' +
+      '   • Groups — run flickr_search_groups for the photo\'s main subjects; pick 2–3 active groups\n' +
+      '4. Call this tool with all of the above at once\n' +
+      '5. After processing, call flickr_get_albums and suggest which existing album the photo belongs in\n\n' +
+      'GROUP HANDLING: auto-joins groups the user is not yet a member of before adding. Throttle errors (group photo limit reached) are skipped gracefully — do not retry.\n\n' +
+      'PARTIAL PROCESSING: if the photo already has tags but no description (or vice versa), only supply the missing fields — do not overwrite what is already there.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        photo_id: { type: 'string', description: 'Flickr photo ID' },
+        title: { type: 'string', description: 'New title. Omit to keep existing.' },
+        description: { type: 'string', description: 'New description. Omit to keep existing.' },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tags to add. ~20 relevant tags including gear from EXIF. Follows Flickr tagging best practices.',
+        },
+        group_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Group nsids to add the photo to. Auto-joins groups not yet joined. Get IDs from flickr_search_groups.',
+        },
+      },
+      required: ['photo_id'],
+    },
+  },
+  {
     name: 'flickr_search_groups',
     description:
       'Search Flickr groups by keyword. Returns group names, IDs (nsid), member counts, and pool sizes. Use this to find relevant groups before adding photos with flickr_add_to_group. Favour groups with higher member counts and pool sizes as a signal of activity. You must be a member of a group before you can add photos to it.',
@@ -406,6 +451,109 @@ export async function handleTool(
 
         await client.removeTag(photoId, tagText);
         return text(`[APPLIED]\n\n${preview}\n✓ Tag removed successfully.`);
+      }
+
+      case 'flickr_get_unprocessed_photos': {
+        const RAW_TITLE = /^(DSC|IMG_|DSCF|DSCN|MVI_|DSC_|_DSC|P\d{3,}|\d{8}_\d{4,})/i;
+        const EXPORT_SUFFIX = /-Edit[-_]|-Export[-_]|-HDR\b|-Pano\b/i;
+
+        let page = 1;
+        let totalPages = 1;
+        const allPhotos: Array<{ id: string; title: string; tags?: string; description?: string }> = [];
+
+        do {
+          const result = await client.listPhotos(page, 500);
+          allPhotos.push(...result.photos);
+          totalPages = result.pages;
+          page++;
+        } while (page <= totalPages);
+
+        const unprocessed = allPhotos
+          .map(p => {
+            const missing: string[] = [];
+            if (!p.tags?.trim()) missing.push('tags');
+            if (!p.description?.trim()) missing.push('description');
+            if (RAW_TITLE.test(p.title) || EXPORT_SUFFIX.test(p.title)) missing.push('title');
+            return { id: p.id, title: p.title, missing };
+          })
+          .filter(p => p.missing.length > 0);
+
+        if (!unprocessed.length) {
+          return text('All photos are fully processed — nothing to do.');
+        }
+
+        const lines = unprocessed.map(p =>
+          `ID: ${p.id} | "${p.title}" | Missing: ${p.missing.join(', ')}`
+        );
+        return text(`${unprocessed.length} photo(s) need processing:\n\n${lines.join('\n')}`);
+      }
+
+      case 'flickr_process_photo': {
+        const photoId = String(args['photo_id']);
+        const title = args['title'] !== undefined ? String(args['title']) : undefined;
+        const description = args['description'] !== undefined ? String(args['description']) : undefined;
+        const tags = args['tags'] as string[] | undefined;
+        const groupIds = args['group_ids'] as string[] | undefined;
+
+        const results: string[] = [];
+        const photo = await client.getPhoto(photoId);
+        const currentTitle = photo.title._content;
+
+        // Title + description
+        if (title !== undefined || description !== undefined) {
+          const newTitle = title ?? currentTitle;
+          const newDesc = description ?? photo.description._content;
+          await client.setMetadata(photoId, newTitle, newDesc);
+          if (title) results.push(`Title: "${currentTitle}" → "${title}"`);
+          if (description) results.push(`Description set.`);
+        }
+
+        // Tags
+        if (tags?.length) {
+          const existing = photo.tags?.tag?.map(t => t._content.toLowerCase()) ?? [];
+          const toAdd = tags.filter(t => !existing.includes(t.toLowerCase()));
+          if (toAdd.length) {
+            await client.addTags(photoId, toAdd);
+            results.push(`Tags added (${toAdd.length}): ${toAdd.join(', ')}`);
+          } else {
+            results.push('Tags: all already present, nothing added.');
+          }
+        }
+
+        // Groups — auto-join then add
+        if (groupIds?.length) {
+          const currentGroups = await client.getPhotoGroups(photoId);
+          const inGroups = new Set(currentGroups.map(g => g.id));
+
+          for (const groupId of groupIds) {
+            if (inGroups.has(groupId)) {
+              results.push(`Group ${groupId}: already in pool (skipped).`);
+              continue;
+            }
+            try {
+              await client.addToGroup(photoId, groupId);
+              results.push(`Group ${groupId}: added.`);
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              if (msg.includes('2')) {
+                try {
+                  await client.joinGroup(groupId);
+                  await client.addToGroup(photoId, groupId);
+                  results.push(`Group ${groupId}: joined and added.`);
+                } catch (e2) {
+                  results.push(`Group ${groupId}: failed — ${e2 instanceof Error ? e2.message : String(e2)}`);
+                }
+              } else if (msg.includes('5') || msg.includes('6')) {
+                results.push(`Group ${groupId}: throttled or already in pool (skipped).`);
+              } else {
+                results.push(`Group ${groupId}: error — ${msg}`);
+              }
+            }
+          }
+        }
+
+        const finalTitle = title ?? currentTitle;
+        return text(`[PROCESSED] "${finalTitle}" (${photoId})\n\n${results.join('\n')}`);
       }
 
       case 'flickr_search_groups': {
