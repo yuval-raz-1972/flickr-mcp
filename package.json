@@ -1,6 +1,7 @@
 {
   "name": "flickr-mcp",
-  "version": "0.1.0",
+  "version": "0.2.1",
+  "mcpName": "io.github.MK3Core/flickr-mcp",
   "description": "MCP server for managing your Flickr photo library — add tags, titles, and descriptions using AI",
   "type": "module",
   "main": "dist/index.js",
