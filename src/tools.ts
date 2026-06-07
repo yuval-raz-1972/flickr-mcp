@@ -154,6 +154,60 @@ export const TOOLS: Tool[] = [
     },
   },
   {
+    name: 'flickr_search_groups',
+    description:
+      'Search Flickr groups by keyword. Returns group names, IDs (nsid), member counts, and pool sizes. Use this to find relevant groups before adding photos with flickr_add_to_group. Favour groups with higher member counts and pool sizes as a signal of activity. You must be a member of a group before you can add photos to it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search keyword, e.g. "drift photography" or "michigan landscape"',
+        },
+        per_page: {
+          type: 'number',
+          description: 'Number of results to return, max 500 (default: 10)',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'flickr_join_group',
+    description:
+      'Join a Flickr group so photos can be added to its pool. Use flickr_search_groups first to find the group ID. Accepts group rules automatically.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        group_id: {
+          type: 'string',
+          description: 'Flickr group ID (nsid), e.g. "12345678@N00". Get this from flickr_search_groups.',
+        },
+      },
+      required: ['group_id'],
+    },
+  },
+  {
+    name: 'flickr_add_to_group',
+    description:
+      'Add a photo to a Flickr group pool. You must already be a member of the group. When dry_run is true (the default), previews the action without making changes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        photo_id: { type: 'string', description: 'Flickr photo ID' },
+        group_id: {
+          type: 'string',
+          description: 'Flickr group ID (nsid), e.g. "12345678@N00". Get this from flickr_search_groups.',
+        },
+        dry_run: {
+          type: 'boolean',
+          description: 'Preview mode — show what would happen without writing. Default: true.',
+        },
+      },
+      required: ['photo_id', 'group_id'],
+    },
+  },
+  {
     name: 'flickr_set_metadata',
     description:
       'Set the title and/or description of a photo. When dry_run is true (the default), returns a preview of the changes without writing them.',
@@ -352,6 +406,76 @@ export async function handleTool(
 
         await client.removeTag(photoId, tagText);
         return text(`[APPLIED]\n\n${preview}\n✓ Tag removed successfully.`);
+      }
+
+      case 'flickr_search_groups': {
+        const query = String(args['query']);
+        const perPage = Number(args['per_page'] ?? 10);
+        const result = await client.searchGroups(query, perPage);
+
+        if (!result.groups.length) {
+          return text(`No groups found for "${query}".`);
+        }
+
+        const lines = result.groups.map(g =>
+          `ID: ${g.nsid} | "${g.name}" | ${g.members.toLocaleString()} members | ${g.pool_count.toLocaleString()} photos`
+        );
+        return text(
+          `${result.total} groups found for "${query}" (showing ${result.groups.length}):\n\n${lines.join('\n')}`
+        );
+      }
+
+      case 'flickr_join_group': {
+        const groupId = String(args['group_id']);
+        try {
+          await client.joinGroup(groupId);
+          return text(`✓ Joined group ${groupId} successfully.`);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes('3')) return text(`Already a member of group ${groupId}.`);
+          throw e;
+        }
+      }
+
+      case 'flickr_add_to_group': {
+        const photoId = String(args['photo_id']);
+        const groupId = String(args['group_id']);
+        const dryRun = Boolean(args['dry_run'] ?? true);
+
+        const [photo, currentGroups] = await Promise.all([
+          client.getPhoto(photoId),
+          client.getPhotoGroups(photoId),
+        ]);
+
+        const alreadyIn = currentGroups.find(g => g.id === groupId);
+
+        const preview =
+          `Photo: "${photo.title._content}" (${photoId})\n` +
+          (alreadyIn
+            ? `Already in group: "${alreadyIn.title}" — no action needed.`
+            : `Add to group ID: ${groupId}`);
+
+        if (alreadyIn) {
+          return text(preview);
+        }
+
+        if (dryRun) {
+          return text(`[DRY RUN — no changes made]\n\n${preview}\nCall again with dry_run: false to apply.`);
+        }
+
+        try {
+          await client.addToGroup(photoId, groupId);
+          return text(`[APPLIED]\n\n${preview}\n✓ Photo added to group successfully.`);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes('6')) {
+            return text(`Photo "${photo.title._content}" is already in this group pool.`);
+          }
+          if (msg.includes('2')) {
+            return err(`You are not a member of group ${groupId}. Join the group on Flickr first.`);
+          }
+          throw e;
+        }
       }
 
       case 'flickr_set_metadata': {

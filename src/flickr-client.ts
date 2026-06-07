@@ -26,6 +26,13 @@ export interface FlickrPhotoDetail {
   location?: { latitude: number; longitude: number; country?: { _content: string } };
 }
 
+export interface FlickrGroup {
+  nsid: string;
+  name: string;
+  members: number;
+  pool_count: number;
+}
+
 export interface FlickrAlbum {
   id: string;
   title: { _content: string };
@@ -239,5 +246,39 @@ export class FlickrClient {
       { photo_id: photoId, title, description },
       'POST'
     );
+  }
+
+  // ─── Groups ───────────────────────────────────────────────────────────────
+
+  async searchGroups(query: string, perPage = 10): Promise<{ groups: FlickrGroup[]; total: number }> {
+    const data = await this.call('flickr.groups.search', {
+      text: query,
+      per_page: String(Math.min(perPage, 500)),
+    });
+    const r = data['groups'] as Record<string, unknown>;
+    const raw = (r['group'] as Array<Record<string, unknown>>) ?? [];
+    return {
+      groups: raw.map(g => ({
+        nsid: String(g['nsid']),
+        name: String(g['name']),
+        members: Number(g['members']),
+        pool_count: Number(g['pool_count']),
+      })),
+      total: Number(r['total']),
+    };
+  }
+
+  async getPhotoGroups(photoId: string): Promise<Array<{ id: string; title: string }>> {
+    const data = await this.call('flickr.photos.getAllContexts', { photo_id: photoId });
+    const pools = (data['pool'] as Array<Record<string, unknown>>) ?? [];
+    return pools.map(p => ({ id: String(p['id']), title: String(p['title']) }));
+  }
+
+  async addToGroup(photoId: string, groupId: string): Promise<void> {
+    await this.call('flickr.groups.pools.add', { photo_id: photoId, group_id: groupId }, 'POST');
+  }
+
+  async joinGroup(groupId: string): Promise<void> {
+    await this.call('flickr.groups.join', { group_id: groupId, accept_rules: '1' }, 'POST');
   }
 }
