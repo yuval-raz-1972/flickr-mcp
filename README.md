@@ -1,5 +1,9 @@
 # flickr-mcp
 
+[![npm](https://img.shields.io/npm/v/flickr-mcp)](https://www.npmjs.com/package/flickr-mcp)
+[![MCP Registry](https://img.shields.io/badge/MCP_Registry-listed-blue)](https://registry.modelcontextprotocol.io/v0.1/servers?search=flickr-mcp)
+[![Sponsor](https://img.shields.io/github/sponsors/MK3Core?label=Sponsor&logo=githubsponsors&color=EA4AAA)](https://github.com/sponsors/MK3Core)
+
 An MCP server that gives AI assistants authenticated access to your Flickr photo library. Tag photos, write descriptions, set titles, manage group memberships, and run a full automated processing workflow — all driven by AI, applied to your photos.
 
 Works with any MCP-compatible AI client: Claude, Cursor, Windsurf, and others.
@@ -203,7 +207,7 @@ Then point your MCP client at `node /path/to/flickr-mcp/dist/index.js` instead o
 
 flickr-mcp is free and open source. If it saves you time, a GitHub sponsorship is always appreciated — it helps justify spending more time on projects like this.
 
-[Sponsor on GitHub](https://github.com/sponsors/MK3Core)
+[![Sponsor](https://img.shields.io/github/sponsors/MK3Core?label=Sponsor&logo=githubsponsors&color=EA4AAA)](https://github.com/sponsors/MK3Core)
 
 ---
 
