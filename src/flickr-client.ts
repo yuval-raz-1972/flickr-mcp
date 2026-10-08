@@ -49,6 +49,94 @@ export interface FlickrAlbum {
   count_photos: number;
 }
 
+export interface CreatedFlickrAlbum {
+  id: string;
+  url: string;
+  title: string;
+  description: string;
+  primaryPhotoId: string;
+  photoCount: number;
+}
+
+export interface AlbumPhotosAdded {
+  albumId: string;
+  addedPhotoIds: string[];
+  addedCount: number;
+}
+
+export interface AlbumPhotoOrder {
+  albumId: string;
+  photoIds: string[];
+  primaryPhotoId: string;
+  photoCount: number;
+}
+
+/** Thrown when flickr.photosets.addPhoto fails after zero or more earlier photos were added. */
+export class AlbumPhotoAddError extends Error {
+  readonly albumId: string;
+  readonly addedPhotoIds: readonly string[];
+  readonly failedPhotoId: string;
+  readonly remainingPhotoIds: readonly string[];
+
+  constructor(
+    albumId: string,
+    addedPhotoIds: readonly string[],
+    failedPhotoId: string,
+    remainingPhotoIds: readonly string[],
+    cause: string
+  ) {
+    const added =
+      addedPhotoIds.length > 0 ? addedPhotoIds.join(', ') : '(none)';
+    const remaining =
+      remainingPhotoIds.length > 0 ? remainingPhotoIds.join(', ') : '(none)';
+    super(
+      `Failed to add photo ${failedPhotoId} to album ${albumId}: ${cause}. ` +
+        `Added ${addedPhotoIds.length} photo(s): ${added}. ` +
+        `Did not attempt ${remainingPhotoIds.length} photo(s): ${remaining}.`
+    );
+    this.name = 'AlbumPhotoAddError';
+    this.albumId = albumId;
+    this.addedPhotoIds = addedPhotoIds;
+    this.failedPhotoId = failedPhotoId;
+    this.remainingPhotoIds = remainingPhotoIds;
+  }
+}
+
+/**
+ * flickr.photosets.addPhoto accepts one photo_id per request, so multi-photo
+ * adds are one POST per ID. This is that per-request limit, not a tunable batch size.
+ */
+export const ALBUM_ADD_PHOTO_BATCH_SIZE = 1;
+
+export function normalizePhotoIdList(photoIds: readonly unknown[], fieldName = 'photo_ids'): string[] {
+  if (!Array.isArray(photoIds) || photoIds.length === 0) {
+    throw new Error(`${fieldName} must be a non-empty list of Flickr photo IDs.`);
+  }
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  const duplicates: string[] = [];
+
+  photoIds.forEach((raw, index) => {
+    const id = typeof raw === 'string' ? raw.trim() : '';
+    if (!id) {
+      throw new Error(`${fieldName}[${index}] is empty.`);
+    }
+    if (seen.has(id)) {
+      if (!duplicates.includes(id)) duplicates.push(id);
+      return;
+    }
+    seen.add(id);
+    normalized.push(id);
+  });
+
+  if (duplicates.length > 0) {
+    throw new Error(`Duplicate photo IDs in ${fieldName}: ${duplicates.join(', ')}`);
+  }
+
+  return normalized;
+}
+
 export interface FlickrExifTag {
   tagspace: string;
   label: string;
@@ -229,6 +317,133 @@ export class FlickrClient {
       photos: (r['photo'] as FlickrPhoto[]) ?? [],
       total: Number(r['total'] ?? 0),
       title: String(r['title'] ?? ''),
+    };
+  }
+
+  /**
+   * WRITE. flickr.photosets.create — new album from an existing photo the caller owns.
+   * primary_photo_id is required by Flickr and becomes the album cover and first member.
+   */
+  async createAlbum(opts: {
+    title: string;
+    description?: string;
+    primaryPhotoId: string;
+  }): Promise<CreatedFlickrAlbum> {
+    const title = opts.title.trim();
+    if (!title) {
+      throw new Error('Album title is required.');
+    }
+    const primaryPhotoId = opts.primaryPhotoId.trim();
+    if (!primaryPhotoId) {
+      throw new Error('primary_photo_id is required.');
+    }
+
+    const params: Record<string, string> = {
+      title,
+      primary_photo_id: primaryPhotoId,
+    };
+    const description = opts.description?.trim();
+    if (description) {
+      params['description'] = description;
+    }
+
+    const data = await this.call('flickr.photosets.create', params, 'POST');
+    const photoset = data['photoset'] as Record<string, unknown> | undefined;
+    const id = photoset ? String(photoset['id'] ?? '') : '';
+    if (!id) {
+      throw new Error('Flickr photosets.create did not return an album id.');
+    }
+
+    return {
+      id,
+      url: String(photoset?.['url'] ?? ''),
+      title,
+      description: description ?? '',
+      primaryPhotoId,
+      photoCount: 1,
+    };
+  }
+
+  /**
+   * WRITE. Append existing photos with flickr.photosets.addPhoto.
+   * Flickr accepts one photo per call, so IDs are sent sequentially in the given order.
+   * The first failure stops the sequence and reports IDs already added and IDs not attempted.
+   */
+  async addPhotosToAlbum(albumId: string, photoIds: readonly unknown[]): Promise<AlbumPhotosAdded> {
+    const photosetId = albumId.trim();
+    if (!photosetId) {
+      throw new Error('album_id is required.');
+    }
+    const ids = normalizePhotoIdList(photoIds);
+    const addedPhotoIds: string[] = [];
+
+    for (let index = 0; index < ids.length; index += ALBUM_ADD_PHOTO_BATCH_SIZE) {
+      const batch = ids.slice(index, index + ALBUM_ADD_PHOTO_BATCH_SIZE);
+      const photoId = batch[0];
+      if (batch.length !== ALBUM_ADD_PHOTO_BATCH_SIZE || !photoId) {
+        throw new Error(`Internal error: album add batch at index ${index} was not a single photo ID.`);
+      }
+      try {
+        await this.call(
+          'flickr.photosets.addPhoto',
+          { photoset_id: photosetId, photo_id: photoId },
+          'POST'
+        );
+        addedPhotoIds.push(photoId);
+      } catch (error) {
+        const cause = error instanceof Error ? error.message : String(error);
+        throw new AlbumPhotoAddError(
+          photosetId,
+          addedPhotoIds,
+          photoId,
+          ids.slice(index + batch.length),
+          cause
+        );
+      }
+    }
+
+    return {
+      albumId: photosetId,
+      addedPhotoIds,
+      addedCount: addedPhotoIds.length,
+    };
+  }
+
+  /**
+   * WRITE. flickr.photosets.editPhotos replaces album membership with photoIds
+   * in that exact order. primary_photo_id is required and must be one of those IDs.
+   * When omitted, the first ID is the primary (cover) photo.
+   */
+  async setAlbumPhotoOrder(
+    albumId: string,
+    photoIds: readonly unknown[],
+    primaryPhotoId?: string
+  ): Promise<AlbumPhotoOrder> {
+    const photosetId = albumId.trim();
+    if (!photosetId) {
+      throw new Error('album_id is required.');
+    }
+    const ids = normalizePhotoIdList(photoIds);
+    const primary = (primaryPhotoId ?? '').trim() || ids[0];
+    if (!ids.includes(primary)) {
+      throw new Error(`primary_photo_id ${primary} must appear in photo_ids.`);
+    }
+
+    await this.call(
+      'flickr.photosets.editPhotos',
+      {
+        photoset_id: photosetId,
+        primary_photo_id: primary,
+        photo_ids: ids.join(','),
+      },
+      'POST'
+    );
+
+    return {
+      albumId: photosetId,
+      photoIds: ids,
+      primaryPhotoId: primary,
+      photoCount: ids.length,
     };
   }
 

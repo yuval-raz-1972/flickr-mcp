@@ -108,6 +108,64 @@ export const TOOLS: Tool[] = [
     },
   },
   {
+    name: 'flickr_create_album',
+    description:
+      'WRITE OPERATION. Create a new Flickr album (photoset) from an existing photo you own. Calls flickr.photosets.create. Flickr requires primary_photo_id: that photo becomes the album cover and the album\'s initial member. Optional description is sent only when provided. Does not upload photos or change photo titles, descriptions, tags, privacy, licensing, or group membership.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Album title' },
+        description: { type: 'string', description: 'Optional album description' },
+        primary_photo_id: {
+          type: 'string',
+          description:
+            'Flickr photo ID of an existing photo you own. Required by flickr.photosets.create as the cover and initial photo.',
+        },
+      },
+      required: ['title', 'primary_photo_id'],
+    },
+  },
+  {
+    name: 'flickr_add_album_photos',
+    description:
+      'WRITE OPERATION. Add existing Flickr photos you own to an album. Calls flickr.photosets.addPhoto, which accepts one photo per request, so each photo ID is submitted in the given order as its own request. Stops at the first Flickr error and reports photos already added, the failed ID, and IDs not attempted. Does not skip IDs. Does not change photo titles, descriptions, tags, privacy, licensing, or group membership.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        album_id: { type: 'string', description: 'Flickr album (photoset) ID' },
+        photo_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Existing Flickr photo IDs to append, in the order they should be added.',
+        },
+      },
+      required: ['album_id', 'photo_ids'],
+    },
+  },
+  {
+    name: 'flickr_set_album_photo_order',
+    description:
+      'WRITE OPERATION. Set the exact membership and order of an album. Calls flickr.photosets.editPhotos: photo_ids replace the album contents in the supplied order. primary_photo_id is required by Flickr and must be one of those IDs; when omitted, the first photo ID is the cover. Rejects an empty list and duplicate IDs before calling Flickr. Does not change photo titles, descriptions, tags, privacy, licensing, or group membership.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        album_id: { type: 'string', description: 'Flickr album (photoset) ID' },
+        photo_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Complete ordered list of Flickr photo IDs. This exact sequence becomes the album order.',
+        },
+        primary_photo_id: {
+          type: 'string',
+          description:
+            'Cover photo ID. Must appear in photo_ids. Defaults to the first photo ID when omitted.',
+        },
+      },
+      required: ['album_id', 'photo_ids'],
+    },
+  },
+  {
     name: 'flickr_add_tags',
     description:
       'Add tags to a photo. When dry_run is true (the default), returns a preview of what would be added without making any changes — use this to confirm with the user before writing.\n\n' +
@@ -402,6 +460,52 @@ export async function handleTool(
         );
         return text(
           `Album "${result.title}" — ${result.total} photos\n\n${lines.join('\n')}`
+        );
+      }
+
+      case 'flickr_create_album': {
+        const title = typeof args['title'] === 'string' ? args['title'] : '';
+        const primaryPhotoId =
+          typeof args['primary_photo_id'] === 'string' ? args['primary_photo_id'] : '';
+        const description =
+          typeof args['description'] === 'string' ? args['description'] : undefined;
+        const result = await client.createAlbum({ title, description, primaryPhotoId });
+        const descriptionLine = result.description ? `\nDescription: ${result.description}` : '';
+        return text(
+          `[WRITE] Created album "${result.title}"\n` +
+            `Album ID: ${result.id}\n` +
+            `URL: ${result.url}\n` +
+            `Primary photo ID: ${result.primaryPhotoId}\n` +
+            `Photos in album: ${result.photoCount}` +
+            descriptionLine
+        );
+      }
+
+      case 'flickr_add_album_photos': {
+        const albumId = typeof args['album_id'] === 'string' ? args['album_id'] : '';
+        if (!Array.isArray(args['photo_ids'])) {
+          return err('photo_ids must be a non-empty list of Flickr photo IDs.');
+        }
+        const result = await client.addPhotosToAlbum(albumId, args['photo_ids']);
+        return text(
+          `[WRITE] Added ${result.addedCount} photo(s) to album ${result.albumId}\n` +
+            `Photo IDs: ${result.addedPhotoIds.join(', ')}`
+        );
+      }
+
+      case 'flickr_set_album_photo_order': {
+        const albumId = typeof args['album_id'] === 'string' ? args['album_id'] : '';
+        if (!Array.isArray(args['photo_ids'])) {
+          return err('photo_ids must be a non-empty list of Flickr photo IDs.');
+        }
+        const primaryPhotoId =
+          typeof args['primary_photo_id'] === 'string' ? args['primary_photo_id'] : undefined;
+        const result = await client.setAlbumPhotoOrder(albumId, args['photo_ids'], primaryPhotoId);
+        return text(
+          `[WRITE] Set photo order for album ${result.albumId}\n` +
+            `Primary photo ID: ${result.primaryPhotoId}\n` +
+            `Photo count: ${result.photoCount}\n` +
+            `Order: ${result.photoIds.join(', ')}`
         );
       }
 
