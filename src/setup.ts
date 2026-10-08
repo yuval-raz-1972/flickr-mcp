@@ -1,4 +1,4 @@
-import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { createServer, IncomingMessage, Server, ServerResponse } from 'http';
 import { getRequestToken, getAccessToken, saveCredentials, hasCredentials } from './auth.js';
 import { patchMcpConfigs, PatchResult } from './config-patcher.js';
 
@@ -21,6 +21,157 @@ function sendJson(res: ServerResponse, status: number, data: unknown) {
   const body = JSON.stringify(data);
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(body);
+}
+
+type PublicSetupStatus =
+  | { phase: 'idle' }
+  | { phase: 'awaiting_auth' }
+  | { phase: 'done'; username: string; configResults: PatchResult[] }
+  | { phase: 'error'; message: string };
+
+/** Fields the setup page reads. Secret material stays in memory and is never copied here. */
+function publicSetupStatus(state: SetupState): PublicSetupStatus {
+  switch (state.phase) {
+    case 'idle':
+      return { phase: 'idle' };
+    case 'awaiting_auth':
+      return { phase: 'awaiting_auth' };
+    case 'done':
+      return { phase: 'done', username: state.username, configResults: state.configResults };
+    case 'error':
+      return { phase: 'error', message: state.message };
+  }
+}
+
+function redactSecrets(message: string, secrets: readonly string[]): string {
+  const withoutKnownSecrets = secrets.reduce((text, secret) => {
+    if (!secret) return text;
+    return text.split(secret).join('[redacted]');
+  }, message);
+  return withoutKnownSecrets.replace(
+    /\b((?:oauth_token_secret|oauth_token|api_secret|api_key)=)[^&\s"'<>]+/gi,
+    '$1[redacted]'
+  );
+}
+
+export interface SetupServerDeps {
+  getRequestToken: typeof getRequestToken;
+  getAccessToken: typeof getAccessToken;
+  saveCredentials: typeof saveCredentials;
+  patchMcpConfigs: typeof patchMcpConfigs;
+  onAuthorized?: () => void;
+}
+
+export interface SetupServer {
+  listen(): Promise<number>;
+  close(): Promise<void>;
+}
+
+export function createSetupServer(deps: SetupServerDeps): SetupServer {
+  let state: SetupState = { phase: 'idle' };
+  let serverPort = 0;
+
+  const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    handleRequest(req, res).catch(e => {
+      console.error('Setup server error:', e);
+      if (!res.headersSent) { res.writeHead(500); res.end(); }
+    });
+  });
+
+  async function handleRequest(req: IncomingMessage, res: ServerResponse) {
+    const url = new URL(req.url!, `http://127.0.0.1`);
+
+    if (url.pathname === '/' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(SETUP_HTML);
+      return;
+    }
+
+    if (url.pathname === '/start' && req.method === 'POST') {
+      const body = await readBody(req);
+      let apiKey: string, apiSecret: string;
+      try {
+        ({ apiKey, apiSecret } = JSON.parse(body));
+      } catch {
+        return sendJson(res, 400, { error: 'Invalid request body.' });
+      }
+      if (!apiKey || !apiSecret) {
+        return sendJson(res, 400, { error: 'API key and secret are required.' });
+      }
+      try {
+        const callbackUrl = `http://127.0.0.1:${serverPort}/callback`;
+        const { token, tokenSecret } = await deps.getRequestToken(apiKey, apiSecret, callbackUrl);
+        state = { phase: 'awaiting_auth', apiKey, apiSecret, requestToken: token, requestTokenSecret: tokenSecret };
+        const authUrl = `https://www.flickr.com/services/oauth/authorize?oauth_token=${token}&perms=write`;
+        return sendJson(res, 200, { authUrl });
+      } catch (e) {
+        const raw = e instanceof Error ? e.message : 'Failed to get request token. Check your API key and secret.';
+        return sendJson(res, 500, { error: redactSecrets(raw, [apiKey, apiSecret]) });
+      }
+    }
+
+    if (url.pathname === '/callback' && req.method === 'GET') {
+      const oauthVerifier = url.searchParams.get('oauth_verifier');
+      if (!oauthVerifier || state.phase !== 'awaiting_auth') {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Invalid callback — please restart setup.');
+        return;
+      }
+      const { apiKey, apiSecret, requestToken, requestTokenSecret } = state;
+      let accessToken = '';
+      let accessTokenSecret = '';
+      try {
+        const access = await deps.getAccessToken(apiKey, apiSecret, requestToken, requestTokenSecret, oauthVerifier);
+        accessToken = access.token;
+        accessTokenSecret = access.tokenSecret;
+        deps.saveCredentials({
+          api_key: apiKey,
+          api_secret: apiSecret,
+          oauth_token: access.token,
+          oauth_token_secret: access.tokenSecret,
+          user_nsid: access.userNsid,
+          username: access.username,
+        });
+        const configResults = deps.patchMcpConfigs();
+        state = { phase: 'done', username: access.username, configResults };
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(CALLBACK_HTML);
+        deps.onAuthorized?.();
+      } catch (e) {
+        const raw = e instanceof Error ? e.message : 'Authorization failed.';
+        state = {
+          phase: 'error',
+          message: redactSecrets(raw, [apiKey, apiSecret, requestToken, requestTokenSecret, accessToken, accessTokenSecret]),
+        };
+        res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><body style="font-family:sans-serif;padding:40px"><h2>Authorization failed</h2><p>Return to the setup page and try again.</p></body></html>');
+      }
+      return;
+    }
+
+    if (url.pathname === '/status' && req.method === 'GET') {
+      return sendJson(res, 200, publicSetupStatus(state));
+    }
+
+    res.writeHead(404);
+    res.end();
+  }
+
+  return {
+    listen() {
+      return new Promise(resolve => {
+        server.listen(0, '127.0.0.1', () => {
+          serverPort = (server.address() as { port: number }).port;
+          resolve(serverPort);
+        });
+      });
+    },
+    close() {
+      return new Promise((resolve, reject) => {
+        server.close(err => (err ? reject(err) : resolve()));
+      });
+    },
+  };
 }
 
 const CALLBACK_HTML = `<!DOCTYPE html>
@@ -231,90 +382,20 @@ export async function runSetup(force = false): Promise<void> {
     process.exit(0);
   }
 
-  let state: SetupState = { phase: 'idle' };
-  let serverPort = 0;
-
   return new Promise<void>(resolve => {
-    const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-      handleRequest(req, res).catch(e => {
-        console.error('Setup server error:', e);
-        if (!res.headersSent) { res.writeHead(500); res.end(); }
-      });
+    let server: SetupServer;
+    server = createSetupServer({
+      getRequestToken,
+      getAccessToken,
+      saveCredentials,
+      patchMcpConfigs,
+      onAuthorized() {
+        setTimeout(() => { void server.close().then(() => resolve()); }, 8000);
+      },
     });
 
-    async function handleRequest(req: IncomingMessage, res: ServerResponse) {
-      const url = new URL(req.url!, `http://127.0.0.1`);
-
-      if (url.pathname === '/' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(SETUP_HTML);
-        return;
-      }
-
-      if (url.pathname === '/start' && req.method === 'POST') {
-        const body = await readBody(req);
-        let apiKey: string, apiSecret: string;
-        try {
-          ({ apiKey, apiSecret } = JSON.parse(body));
-        } catch {
-          return sendJson(res, 400, { error: 'Invalid request body.' });
-        }
-        if (!apiKey || !apiSecret) {
-          return sendJson(res, 400, { error: 'API key and secret are required.' });
-        }
-        try {
-          const callbackUrl = `http://127.0.0.1:${serverPort}/callback`;
-          const { token, tokenSecret } = await getRequestToken(apiKey, apiSecret, callbackUrl);
-          state = { phase: 'awaiting_auth', apiKey, apiSecret, requestToken: token, requestTokenSecret: tokenSecret };
-          const authUrl = `https://www.flickr.com/services/oauth/authorize?oauth_token=${token}&perms=write`;
-          return sendJson(res, 200, { authUrl });
-        } catch (e) {
-          return sendJson(res, 500, { error: e instanceof Error ? e.message : 'Failed to get request token. Check your API key and secret.' });
-        }
-      }
-
-      if (url.pathname === '/callback' && req.method === 'GET') {
-        const oauthVerifier = url.searchParams.get('oauth_verifier');
-        if (!oauthVerifier || state.phase !== 'awaiting_auth') {
-          res.writeHead(400, { 'Content-Type': 'text/plain' });
-          res.end('Invalid callback — please restart setup.');
-          return;
-        }
-        try {
-          const { apiKey, apiSecret, requestToken, requestTokenSecret } = state;
-          const access = await getAccessToken(apiKey, apiSecret, requestToken, requestTokenSecret, oauthVerifier);
-          saveCredentials({
-            api_key: apiKey,
-            api_secret: apiSecret,
-            oauth_token: access.token,
-            oauth_token_secret: access.tokenSecret,
-            user_nsid: access.userNsid,
-            username: access.username,
-          });
-          const configResults = patchMcpConfigs();
-          state = { phase: 'done', username: access.username, configResults };
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end(CALLBACK_HTML);
-          setTimeout(() => server.close(() => resolve()), 8000);
-        } catch (e) {
-          state = { phase: 'error', message: e instanceof Error ? e.message : 'Authorization failed.' };
-          res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end('<html><body style="font-family:sans-serif;padding:40px"><h2>Authorization failed</h2><p>Return to the setup page and try again.</p></body></html>');
-        }
-        return;
-      }
-
-      if (url.pathname === '/status' && req.method === 'GET') {
-        return sendJson(res, 200, state);
-      }
-
-      res.writeHead(404);
-      res.end();
-    }
-
-    server.listen(0, '127.0.0.1', () => {
-      serverPort = (server.address() as { port: number }).port;
-      const setupUrl = `http://127.0.0.1:${serverPort}`;
+    void server.listen().then(port => {
+      const setupUrl = `http://127.0.0.1:${port}`;
       console.error('\n=== Flickr MCP Setup ===\n');
       console.error(`Opening: ${setupUrl}`);
       console.error('(If your browser does not open, visit the URL above)\n');
