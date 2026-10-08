@@ -199,7 +199,7 @@ export class FlickrClient {
 
   async getAlbums(page = 1, perPage = 50): Promise<{ albums: FlickrAlbum[]; total: number }> {
     const data = await this.call('flickr.photosets.getList', {
-      user_id: 'me',
+      user_id: this.creds.user_nsid,
       page: String(page),
       per_page: String(Math.min(perPage, 500)),
     });
@@ -218,7 +218,7 @@ export class FlickrClient {
   ): Promise<{ photos: FlickrPhoto[]; total: number; title: string }> {
     const data = await this.call('flickr.photosets.getPhotos', {
       photoset_id: albumId,
-      user_id: 'me',
+      user_id: this.creds.user_nsid,
       extras: 'url_sq,url_m,url_l,date_taken,tags,description',
       page: String(page),
       per_page: String(Math.min(perPage, 500)),
